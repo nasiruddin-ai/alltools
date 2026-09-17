@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Domain Age Checker</title>
+<style>
+  :root {
+    --bg: #f4f6fb;
+    --card: #ffffff;
+    --text: #1b2433;
+    --muted: #64708a;
+    --line: #dfe4ee;
+    --accent: #1f4e78;
+    --accent-text: #ffffff;
+    --ok: #157347;
+    --err-bg: #fdecec;
+    --err-text: #9b1c1c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px 16px 48px;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 1.75rem; margin: 0 0 6px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  form { display: flex; gap: 8px; flex-wrap: wrap; }
+  input[type="text"] {
+    flex: 1 1 260px;
+    font-size: 1.05rem;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--text);
+  }
+  input[type="text"]:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+  button {
+    font-size: 1.05rem;
+    padding: 12px 20px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--accent);
+    color: var(--accent-text);
+    cursor: pointer;
+    flex: 0 0 auto;
+  }
+  button[disabled] { opacity: .6; cursor: wait; }
+  .card {
+    margin-top: 20px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .big {
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1.2;
+    margin: 0 0 4px;
+  }
+  .big small { font-size: 1rem; font-weight: 500; color: var(--muted); }
+  .domain { color: var(--muted); margin: 0 0 16px; word-break: break-all; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 0; }
+  dt { color: var(--muted); }
+  dd { margin: 0; word-break: break-word; }
+  .error { background: var(--err-bg); color: var(--err-text); border-color: transparent; }
+  .note { color: var(--muted); font-size: .95rem; margin-top: 12px; }
+  .foot { color: var(--muted); font-size: .85rem; margin-top: 28px; }
+  @media (max-width: 480px) { dl { grid-template-columns: 1fr; gap: 2px; } dt { margin-top: 8px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Domain Age Checker</h1>
+  <p class="sub">Find out when a domain was first registered and how old it is.</p>
+
+  <form id="form" autocomplete="off">
+    <input type="text" id="domain" placeholder="example.com" required autofocus>
+    <button type="submit" id="btn">Check age</button>
+  </form>
+
+  <div id="result" hidden></div>
+
+  <p class="foot">Data comes from the public RDAP registry system. Some country-code domains do not publish registration dates.</p>
+</div>
+
+<script>
+  const form = document.getElementById("form");
+  const input = document.getElementById("domain");
+  const btn = document.getElementById("btn");
+  const result = document.getElementById("result");
+
+  function fmtDate(iso) {
+    if (!iso) return "Not published";
+    const d = new Date(iso);
+    if (isNaN(d)) return iso;
+    return d.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+  }
+
+  function plural(n, word) { return n + " " + word + (n === 1 ? "" : "s"); }
+
+  function ageText(age) {
+    if (!age) return "";
+    const parts = [];
+    if (age.years) parts.push(plural(age.years, "year"));
+    if (age.months) parts.push(plural(age.months, "month"));
+    if (age.days || parts.length === 0) parts.push(plural(age.days, "day"));
+    return parts.join(", ");
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  function show(html, isError) {
+    result.className = "card" + (isError ? " error" : "");
+    result.innerHTML = html;
+    result.hidden = false;
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const domain = input.value.trim();
+    if (!domain) return;
+
+    btn.disabled = true;
+    btn.textContent = "Checking…";
+    show("Looking up " + esc(domain) + "…");
+
+    try {
+      const res = await fetch("/api/age?domain=" + encodeURIComponent(domain));
+      const data = await res.json();
+
+      if (!data.ok) {
+        show("<strong>Could not check this domain.</strong><br>" + esc(data.error || "Unknown error."), true);
+        return;
+      }
+
+      const subNote = data.domain !== data.queried
+        ? `<p class="note">You entered <strong>${esc(data.queried)}</strong>. Registration data is held for the main domain <strong>${esc(data.domain)}</strong>, shown here.</p>`
+        : "";
+
+      let head;
+      if (data.age) {
+        head = `<p class="big">${esc(ageText(data.age))} <small>old</small></p>
+                <p class="domain">${esc(data.domain)} · ${data.age.totalDays.toLocaleString()} days since registration</p>`;
+      } else {
+        head = `<p class="big">Age unavailable</p>
+                <p class="domain">${esc(data.domain)}</p>`;
+      }
+
+      const status = data.status && data.status.length ? esc(data.status.join(", ")) : "Not published";
+
+      show(head + `
+        <dl>
+          <dt>Registered on</dt><dd>${esc(fmtDate(data.registered))}</dd>
+          <dt>Expires on</dt><dd>${esc(fmtDate(data.expires))}</dd>
+          <dt>Last updated</dt><dd>${esc(fmtDate(data.updated))}</dd>
+          <dt>Registrar</dt><dd>${esc(data.registrar || "Not published")}</dd>
+          <dt>Status</dt><dd>${status}</dd>
+        </dl>
+        ${data.note ? `<p class="note">${esc(data.note)}</p>` : ""}
+        ${subNote}
+      `);
+    } catch (err) {
+      show("<strong>Something went wrong.</strong><br>Is the server still running? " + esc(err.message), true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Check age";
+    }
+  });
+</script>
+</body>
+</html>
